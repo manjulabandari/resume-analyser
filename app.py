@@ -1,131 +1,150 @@
+
 import streamlit as st
-import PyPDF2
-import re
-import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+from io import BytesIO
+from fpdf import FPDF
 
-st.set_page_config(page_title="Resume Analyser", layout="wide")
+st.set_page_config(page_title="AI Resume Analyzer", layout="wide")
 
-st.title("📄 AI Resume Analyser")
-st.markdown("Upload a resume and compare it with a job description to get ATS match score, skills, and suggestions.")
+# -------------------------
+# Helper Functions
+# -------------------------
 
-# -------------------------------
-# File Upload & Input
-# -------------------------------
+def calculate_match(resume_skills, required_skills):
+    if not required_skills:
+        return 0
+    matched = set(resume_skills).intersection(set(required_skills))
+    return int((len(matched) / len(required_skills)) * 100)
+
+
+def generate_pdf(score, matched, missing, suggestions):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    pdf.cell(200, 10, txt="Resume Analysis Report", ln=True)
+    pdf.cell(200, 10, txt=f"Overall Match Score: {score}%", ln=True)
+
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="Matched Skills:", ln=True)
+    for skill in matched:
+        pdf.cell(200, 8, txt=f"- {skill}", ln=True)
+
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="Missing Skills:", ln=True)
+    for skill in missing:
+        pdf.cell(200, 8, txt=f"- {skill}", ln=True)
+
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="Recommendations:", ln=True)
+    for line in suggestions:
+        pdf.multi_cell(0, 8, txt=line)
+
+    pdf_output = BytesIO()
+    pdf.output(pdf_output)
+    pdf_output.seek(0)
+    return pdf_output
+
+# -------------------------
+# UI Layout
+# -------------------------
+
+st.title("💼 Professional Resume Analyzer")
+st.write("Upload your resume skills and compare them with job requirements.")
+
+st.divider()
+
 col1, col2 = st.columns(2)
 
 with col1:
-    job_desc = st.text_area("🧾 Job Description", height=200)
+    st.subheader("Enter Your Resume Skills")
+    resume_input = st.text_area(
+        "Enter skills separated by commas",
+        placeholder="Python, SQL, Machine Learning"
+    )
 
 with col2:
-    resume_file = st.file_uploader("📤 Upload Resume (PDF)", type=["pdf"])
+    st.subheader("Enter Job Required Skills")
+    job_input = st.text_area(
+        "Enter required skills separated by commas",
+        placeholder="Python, Java, Spring Boot"
+    )
 
-# -------------------------------
-# Text Extraction
-# -------------------------------
-def extract_text(file):
-    reader = PyPDF2.PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text()
-    return text
+analyze = st.button("Analyze Resume")
 
-# -------------------------------
-# Skill Extraction
-# -------------------------------
-skill_db = [
-    "python", "java", "c++", "flask", "django", "sql",
-    "machine learning", "data analysis", "html", "css",
-    "javascript", "react", "nlp", "deep learning"
-]
+if analyze:
+    resume_skills = [s.strip().lower() for s in resume_input.split(",") if s.strip()]
+    required_skills = [s.strip().lower() for s in job_input.split(",") if s.strip()]
 
-def extract_skills(text):
-    text = text.lower()
-    found = []
-    for skill in skill_db:
-        if skill in text:
-            found.append(skill)
-    return list(set(found))
+    score = calculate_match(resume_skills, required_skills)
 
-# -------------------------------
-# Keyword Extraction
-# -------------------------------
-def extract_keywords(text):
-    words = re.findall(r'\b[a-zA-Z]{3,}\b', text.lower())
-    return list(set(words))
+    matched = list(set(resume_skills).intersection(set(required_skills)))
+    missing = list(set(required_skills) - set(resume_skills))
 
-# -------------------------------
-# Similarity Score
-# -------------------------------
-def calculate_score(resume_text, job_text):
-    tfidf = TfidfVectorizer(stop_words="english")
-    vectors = tfidf.fit_transform([resume_text, job_text])
-    score = cosine_similarity(vectors)[0][1]
-    return round(score * 100, 2)
+    st.divider()
 
-# -------------------------------
-# Main Execution
-# -------------------------------
-if st.button("🔍 Analyze Resume"):
+    # -------------------------
+    # Score Section
+    # -------------------------
+    st.subheader("📊 Overall Resume Match")
+    st.progress(score / 100)
+    st.metric(label="Match Score", value=f"{score}%")
 
-    if not resume_file or not job_desc:
-        st.error("Please upload resume and enter job description.")
+    # -------------------------
+    # Appreciation Message
+    # -------------------------
+    if score >= 70:
+        st.success("Great job! Your resume is strongly aligned with the job requirements.")
+    elif score >= 40:
+        st.info("Your resume shows good potential. Adding a few more skills can improve your chances.")
     else:
-        resume_text = extract_text(resume_file)
+        st.warning("Your resume needs improvement to match this job profile. Don’t worry — you can improve it easily!")
 
-        score = calculate_score(resume_text, job_desc)
-        resume_skills = extract_skills(resume_text)
-        job_skills = extract_skills(job_desc)
+    # -------------------------
+    # Skills Display
+    # -------------------------
+    col3, col4 = st.columns(2)
 
-        missing_skills = list(set(job_skills) - set(resume_skills))
-
-        # -------------------------------
-        # Display Score
-        # -------------------------------
-        st.subheader("📊 ATS Match Score")
-        st.progress(int(score))
-        st.success(f"Overall Resume Match: {score}%")
-
-        # -------------------------------
-        # Skills Comparison Table
-        # -------------------------------
-        st.subheader("🧠 Skills Analysis")
-
-        col3, col4 = st.columns(2)
-
-        with col3:
-            st.markdown("### Resume Skills")
-            st.write(resume_skills)
-
-        with col4:
-            st.markdown("### Required Skills")
-            st.write(job_skills)
-
-        # -------------------------------
-        # Missing Skills
-        # -------------------------------
-        st.subheader("⚠️ Missing Skills")
-        if missing_skills:
-            st.warning(", ".join(missing_skills))
+    with col3:
+        st.subheader("✅ Skills Found in Your Resume")
+        if matched:
+            for skill in matched:
+                st.markdown(f"- {skill.title()}")
         else:
-            st.success("Your resume matches all required skills!")
+            st.write("No matching skills found.")
 
-        # -------------------------------
-        # Detailed Report Table
-        # -------------------------------
-        st.subheader("📑 Detailed Comparison Report")
+    with col4:
+        st.subheader("⚠️ Skills You Should Consider Adding")
+        if missing:
+            for skill in missing:
+                st.markdown(f"- {skill.title()}")
+        else:
+            st.write("You have all the required skills. Excellent!")
 
-        data = {
-            "Required Skills": job_skills,
-            "Status": ["Matched" if skill in resume_skills else "Missing" for skill in job_skills]
-        }
+    # -------------------------
+    # Suggestions Section
+    # -------------------------
+    st.divider()
+    st.subheader("🧠 Recommendations to Improve Your Resume")
 
-        df = pd.DataFrame(data)
-        st.dataframe(df)
+    suggestions = []
 
-        # -------------------------------
-        # Resume Preview
-        # -------------------------------
-        with st.expander("📄 View Extracted Resume Text"):
-            st.write(resume_text[:2000])
+    if missing:
+        suggestions.append("Consider adding projects or certifications related to the missing skills.")
+        suggestions.append("Mention your hands-on experience with these technologies in your project descriptions.")
+    else:
+        suggestions.append("Your resume is well aligned with the job requirements. Consider tailoring it further with measurable achievements.")
+
+    for line in suggestions:
+        st.write("• " + line)
+
+    # -------------------------
+    # PDF Report Download
+    # -------------------------
+    pdf_file = generate_pdf(score, matched, missing, suggestions)
+
+    st.download_button(
+        label="📄 Download Analysis Report (PDF)",
+        data=pdf_file,
+        file_name="resume_analysis_report.pdf",
+        mime="application/pdf"
+    )
