@@ -1,2 +1,10 @@
+pdfminer3
+pyresparser
 streamlit
-fpdf
+pandas
+pafy
+plotly
+pymysql
+streamlit-tags
+Pillow
+
