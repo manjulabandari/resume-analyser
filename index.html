@@ -15,7 +15,7 @@
             <a class="navbar-brand" href="#">
                 <i class="fas fa-file-pdf"></i> Resume Analyzer Pro
             </a>
-            <span class="navbar-text">AI-Powered Resume Analysis</span>
+            <span class="navbar-text">AI-Powered Resume Analysis with Job Matching</span>
         </div>
     </nav>
 
@@ -25,7 +25,7 @@
             <div class="row align-items-center">
                 <div class="col-lg-6">
                     <h1 class="display-4 fw-bold mb-4">Optimize Your Resume</h1>
-                    <p class="lead mb-4">Get instant, AI-powered feedback to make your resume stand out to recruiters and hiring managers.</p>
+                    <p class="lead mb-4">Get instant, AI-powered feedback to make your resume stand out to recruiters and hiring managers. Compare your resume against job descriptions.</p>
                     <div class="features-list">
                         <div class="feature-item">
                             <i class="fas fa-check-circle text-success"></i>
@@ -33,24 +33,50 @@
                         </div>
                         <div class="feature-item">
                             <i class="fas fa-check-circle text-success"></i>
-                            <span>Actionable Recommendations</span>
+                            <span>Job Description Matching</span>
                         </div>
                         <div class="feature-item">
                             <i class="fas fa-check-circle text-success"></i>
-                            <span>Instant Results</span>
+                            <span>Skill Gap Analysis</span>
+                        </div>
+                        <div class="feature-item">
+                            <i class="fas fa-check-circle text-success"></i>
+                            <span>Actionable Recommendations</span>
                         </div>
                     </div>
                 </div>
                 <div class="col-lg-6">
                     <div class="upload-container">
-                        <div class="upload-box" id="uploadBox">
-                            <i class="fas fa-cloud-upload-alt"></i>
-                            <h3>Upload Your Resume</h3>
-                            <p>Drag and drop or click to select</p>
-                            <small>Supports: PDF, DOCX, DOC, TXT</small>
-                            <input type="file" id="fileInput" accept=".pdf,.docx,.doc,.txt" hidden>
+                        <div class="form-section">
+                            <!-- Resume Upload -->
+                            <div class="mb-4">
+                                <h4>1. Upload Your Resume</h4>
+                                <div class="upload-box" id="uploadBox">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                    <h5>Upload Your Resume</h5>
+                                    <p>Drag and drop or click to select</p>
+                                    <small>Supports: PDF, DOCX, DOC, TXT</small>
+                                    <input type="file" id="fileInput" accept=".pdf,.docx,.doc,.txt" hidden>
+                                </div>
+                            </div>
+
+                            <!-- Job Description -->
+                            <div class="mb-4">
+                                <h4>2. (Optional) Paste Job Description</h4>
+                                <textarea id="jobDescription" class="form-control" rows="6" placeholder="Paste the job description here for better matching..."></textarea>
+                                <small class="text-muted">This helps us identify skills you should highlight</small>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-primary btn-lg" id="analyzeBtn" disabled>
+                                    <i class="fas fa-play"></i> Analyze Resume
+                                </button>
+                                <button class="btn btn-secondary btn-lg" id="tryDemoBtn">
+                                    <i class="fas fa-star"></i> Try Demo
+                                </button>
+                            </div>
                         </div>
-                        <button class="btn btn-primary mt-3" id="tryDemoBtn">Try Demo</button>
                     </div>
                 </div>
             </div>
@@ -76,6 +102,27 @@
                     <div class="score-info">
                         <h2 id="scoreTitle">Resume Analysis Complete</h2>
                         <p id="scoreDescription"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Job Match Card (if job description provided) -->
+            <div id="jobMatchCard" class="job-match-card mb-5" style="display: none;">
+                <div class="match-header">
+                    <h3><i class="fas fa-target"></i> Job Match Analysis</h3>
+                </div>
+                <div class="match-content">
+                    <div class="match-stat">
+                        <span class="match-label">Match Score</span>
+                        <span class="match-value" id="matchPercentage">0%</span>
+                    </div>
+                    <div class="matched-skills">
+                        <h5>Matched Skills ✓</h5>
+                        <div id="matchedSkillsList" class="skills-list"></div>
+                    </div>
+                    <div class="missing-skills">
+                        <h5>Missing Skills ⚠</h5>
+                        <div id="missingSkillsList" class="skills-list"></div>
                     </div>
                 </div>
             </div>
