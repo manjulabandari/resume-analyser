@@ -4,24 +4,49 @@ import os
 import json
 from datetime import datetime
 import re
-from pdfplumber import PDF
-import pdfplumber
-from docx import Document
+import sys
+from pathlib import Path
+
+# Suppress NLTK download warnings and errors
+import warnings
+warnings.filterwarnings('ignore')
+
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
+
+try:
+    from docx import Document
+except ImportError:
+    Document = None
+
 import nltk
 from nltk.tokenize import word_tokenize, sent_tokenize
 from nltk.corpus import stopwords
-import string
 
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+# Fix: Download NLTK data safely without triggering FileExistsError
+def setup_nltk_data():
+    """Setup NLTK data safely"""
+    try:
+        # Check if data exists first before downloading
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        try:
+            nltk.download('punkt', quiet=True)
+        except Exception as e:
+            print(f"Warning: Could not download NLTK punkt data: {e}")
 
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        try:
+            nltk.download('stopwords', quiet=True)
+        except Exception as e:
+            print(f"Warning: Could not download NLTK stopwords data: {e}")
+
+# Call setup function
+setup_nltk_data()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -32,11 +57,131 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt'}
 
-class ResumeAnalyzer:
+# Import ML libraries
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    import numpy as np
+except ImportError:
+    print("Warning: scikit-learn not installed. Some features will be limited.")
+    TfidfVectorizer = None
+    cosine_similarity = None
+    np = None
+
+
+class TrainedModel:
+    """Trained Model for Resume Analysis"""
     def __init__(self):
+        self.tfidf_vectorizer = None
+        self.is_fitted = False
+        self.initialize_model()
+    
+    def initialize_model(self):
+        """Initialize model with sample training data"""
+        if TfidfVectorizer is None:
+            print("Warning: TfidfVectorizer not available")
+            return
+            
+        try:
+            self.tfidf_vectorizer = TfidfVectorizer(max_features=500, stop_words='english')
+            
+            # Sample training data for demonstration
+            sample_resumes = [
+                "Python JavaScript React Node.js AWS Docker Kubernetes",
+                "Java Spring Boot SQL MongoDB REST API",
+                "C++ Linux System Programming Embedded Systems",
+                "Product Manager Leadership Strategy Planning Analytics",
+                "Data Scientist Python Machine Learning TensorFlow Pandas"
+            ]
+            
+            self.tfidf_vectorizer.fit(sample_resumes)
+            self.is_fitted = True
+        except Exception as e:
+            print(f"Model initialization error: {e}")
+            self.is_fitted = False
+    
+    def predict_relevance(self, resume_text, job_description):
+        """Predict relevance between resume and job description"""
+        try:
+            if not self.is_fitted or self.tfidf_vectorizer is None:
+                return 0.0
+            
+            if not resume_text or not job_description:
+                return 0.0
+            
+            resume_vector = self.tfidf_vectorizer.transform([resume_text])
+            job_vector = self.tfidf_vectorizer.transform([job_description])
+            
+            similarity = cosine_similarity(resume_vector, job_vector)[0][0]
+            return float(similarity * 100)  # Convert to percentage
+        except Exception as e:
+            print(f"Prediction error: {e}")
+            return 0.0
+
+
+class NLPPipeline:
+    """NLP Pipeline for processing resume and job description"""
+    def __init__(self):
+        try:
+            self.stop_words = set(stopwords.words('english'))
+        except LookupError:
+            print("Warning: NLTK stopwords not available, using basic stopwords")
+            self.stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for'}
+    
+    def preprocess_text(self, text):
+        """Preprocess text for NLP analysis"""
+        if not text:
+            return []
+            
+        try:
+            # Convert to lowercase
+            text = text.lower()
+            
+            # Remove special characters
+            text = re.sub(r'[^\w\s]', ' ', text)
+            
+            # Tokenize
+            tokens = word_tokenize(text)
+            
+            # Remove stopwords
+            tokens = [token for token in tokens if token not in self.stop_words and len(token) > 1]
+            
+            return tokens
+        except Exception as e:
+            print(f"Preprocessing error: {e}")
+            return text.lower().split()
+    
+    def extract_keywords(self, text):
+        """Extract important keywords from text"""
+        if not text:
+            return []
+            
+        try:
+            tokens = self.preprocess_text(text)
+            
+            # Get word frequencies
+            freq_dist = {}
+            for token in tokens:
+                if len(token) > 3:  # Only consider words longer than 3 chars
+                    freq_dist[token] = freq_dist.get(token, 0) + 1
+            
+            # Sort by frequency
+            sorted_keywords = sorted(freq_dist.items(), key=lambda x: x[1], reverse=True)
+            return [keyword[0] for keyword in sorted_keywords[:20]]
+        except Exception as e:
+            print(f"Keyword extraction error: {e}")
+            return []
+
+
+class ResumeAnalyzer:
+    """Main Resume Analyzer Class"""
+    def __init__(self):
+        self.trained_model = TrainedModel()
+        self.nlp_pipeline = NLPPipeline()
+        
         self.technical_skills = [
             'python', 'javascript', 'java', 'c++', 'c#', 'php', 'ruby', 'go', 'rust',
-            'react', 'vue', 'angular', 'node.js', 'express', 'django', 'flask', 'spring',
+            'react', 'vue', 'angular', 'node.js', 'node', 'express', 'django', 'flask', 'spring',
             'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'jenkins', 'gitlab', 'github',
             'sql', 'nosql', 'mongodb', 'postgresql', 'mysql', 'redis', 'elasticsearch',
             'html', 'css', 'sass', 'bootstrap', 'tailwind', 'webpack', 'npm', 'yarn',
@@ -52,7 +197,7 @@ class ResumeAnalyzer:
         ]
 
         self.action_verbs = [
-            'managed', 'developed', 'implemented', 'led', 'designed', 'created', 'improved',
+            'managed', 'developed', 'implemented', 'led', 'design', 'created', 'improved',
             'optimized', 'automated', 'enhanced', 'established', 'coordinated', 'directed',
             'spearheaded', 'pioneered', 'architected', 'engineered', 'orchestrated',
             'transformed', 'streamlined', 'accelerated', 'boosted', 'elevated', 'expanded'
@@ -65,6 +210,9 @@ class ResumeAnalyzer:
 
     def extract_text_from_file(self, file_path):
         """Extract text from PDF, DOCX, or TXT files"""
+        if not os.path.exists(file_path):
+            raise Exception(f"File not found: {file_path}")
+            
         _, ext = os.path.splitext(file_path)
         ext = ext.lower()
 
@@ -74,24 +222,38 @@ class ResumeAnalyzer:
             elif ext in ['.docx', '.doc']:
                 return self.extract_from_docx(file_path)
             elif ext == '.txt':
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     return f.read()
+            else:
+                raise Exception(f"Unsupported file type: {ext}")
         except Exception as e:
             raise Exception(f"Error extracting text: {str(e)}")
 
     def extract_from_pdf(self, file_path):
         """Extract text from PDF"""
+        if pdfplumber is None:
+            raise Exception("pdfplumber is not installed. Please install it with: pip install pdfplumber")
+            
         text = ""
         try:
             with pdfplumber.open(file_path) as pdf:
                 for page in pdf.pages:
-                    text += page.extract_text() or ""
+                    extracted = page.extract_text()
+                    if extracted:
+                        text += extracted
         except Exception as e:
             raise Exception(f"Error reading PDF: {str(e)}")
+        
+        if not text:
+            raise Exception("Could not extract any text from PDF")
+            
         return text
 
     def extract_from_docx(self, file_path):
         """Extract text from DOCX"""
+        if Document is None:
+            raise Exception("python-docx is not installed. Please install it with: pip install python-docx")
+            
         text = ""
         try:
             doc = Document(file_path)
@@ -99,10 +261,93 @@ class ResumeAnalyzer:
                 text += paragraph.text + "\n"
         except Exception as e:
             raise Exception(f"Error reading DOCX: {str(e)}")
+        
+        if not text:
+            raise Exception("Could not extract any text from DOCX")
+            
         return text
 
-    def analyze(self, resume_text):
+    def compare_with_job_description(self, resume_text, job_description):
+        """Compare resume with job description and extract matching skills"""
+        if not resume_text or not job_description:
+            return {
+                'relevance_score': 0.0,
+                'matched_skills': [],
+                'missing_skills': [],
+                'matched_tech_skills': [],
+                'missing_tech_skills': [],
+                'match_percentage': 0.0
+            }
+        
+        try:
+            # Use trained model to calculate relevance
+            relevance_score = self.trained_model.predict_relevance(resume_text, job_description)
+            
+            # Extract keywords from both
+            resume_keywords = self.nlp_pipeline.extract_keywords(resume_text)
+            job_keywords = self.nlp_pipeline.extract_keywords(job_description)
+            
+            # Find matching keywords
+            matched_skills = list(set(resume_keywords) & set(job_keywords))
+            missing_skills = list(set(job_keywords) - set(resume_keywords))
+            
+            # Extract technical skills from both
+            resume_tech_skills = self.extract_tech_skills_from_text(resume_text)
+            job_tech_skills = self.extract_tech_skills_from_text(job_description)
+            
+            matched_tech_skills = list(set(resume_tech_skills) & set(job_tech_skills))
+            missing_tech_skills = list(set(job_tech_skills) - set(resume_tech_skills))
+            
+            match_percentage = (len(matched_tech_skills) / max(len(job_tech_skills), 1)) * 100
+            
+            return {
+                'relevance_score': round(relevance_score, 2),
+                'matched_skills': matched_skills[:10],
+                'missing_skills': missing_skills[:10],
+                'matched_tech_skills': matched_tech_skills,
+                'missing_tech_skills': missing_tech_skills,
+                'match_percentage': round(match_percentage, 2)
+            }
+        except Exception as e:
+            print(f"Job comparison error: {e}")
+            return {
+                'relevance_score': 0.0,
+                'matched_skills': [],
+                'missing_skills': [],
+                'matched_tech_skills': [],
+                'missing_tech_skills': [],
+                'match_percentage': 0.0
+            }
+
+    def extract_tech_skills_from_text(self, text):
+        """Extract technical skills from text"""
+        if not text:
+            return []
+            
+        text_lower = text.lower()
+        found_skills = []
+        
+        for skill in self.technical_skills:
+            if skill in text_lower:
+                found_skills.append(skill)
+        
+        return found_skills
+
+    def analyze(self, resume_text, job_description=None):
         """Perform comprehensive resume analysis"""
+        if not resume_text or not resume_text.strip():
+            return {
+                'error': 'Resume text is empty',
+                'overall_score': 0,
+                'strengths': [],
+                'improvements': ['Resume appears to be empty'],
+                'recommendations': ['Please provide a valid resume'],
+                'statistics': {},
+                'sections': {},
+                'keyword_analysis': {},
+                'job_match': None
+            }
+        
         text_lower = resume_text.lower()
         
         analysis = {
@@ -112,106 +357,128 @@ class ResumeAnalyzer:
             'recommendations': [],
             'statistics': {},
             'sections': {},
-            'keyword_analysis': {}
+            'keyword_analysis': {},
+            'job_match': None
         }
 
-        # 1. Check for essential sections
-        analysis['sections'] = self.analyze_sections(resume_text, text_lower)
-        
-        # 2. Check for contact information
-        contact_info = self.extract_contact_info(resume_text)
-        if contact_info['email'] or contact_info['phone']:
-            analysis['strengths'].append('Clear contact information provided')
-            analysis['overall_score'] += 5
-        else:
-            analysis['improvements'].append('Missing contact information (email or phone)')
-            analysis['recommendations'].append('Add your email address and phone number at the top of the resume')
+        try:
+            # Compare with job description if provided
+            if job_description and job_description.strip():
+                analysis['job_match'] = self.compare_with_job_description(resume_text, job_description)
+                if analysis['job_match']['match_percentage'] >= 70:
+                    analysis['strengths'].append(f"Strong match ({analysis['job_match']['match_percentage']}%) with job requirements")
+                    analysis['overall_score'] += 15
+                elif analysis['job_match']['match_percentage'] >= 50:
+                    analysis['strengths'].append(f"Good match ({analysis['job_match']['match_percentage']}%) with job requirements")
+                    analysis['overall_score'] += 10
+                else:
+                    analysis['improvements'].append(f"Limited match ({analysis['job_match']['match_percentage']}%) with job requirements")
+                    if analysis['job_match']['missing_tech_skills']:
+                        missing = ', '.join(analysis['job_match']['missing_tech_skills'][:5])
+                        analysis['recommendations'].append(f"Consider adding skills: {missing}")
 
-        # 3. Analyze keywords
-        analysis['keyword_analysis'] = self.analyze_keywords(text_lower)
-        
-        technical_count = len(analysis['keyword_analysis']['technical_skills_found'])
-        if technical_count >= 5:
-            analysis['strengths'].append(f'Strong technical skills section with {technical_count} skills identified')
-            analysis['overall_score'] += 12
-        else:
-            analysis['improvements'].append('Limited technical skills listed')
-            analysis['recommendations'].append('Add more specific technical skills and technologies you are proficient in')
-            analysis['overall_score'] -= 3
+            # 1. Check for essential sections
+            analysis['sections'] = self.analyze_sections(resume_text, text_lower)
+            
+            # 2. Check for contact information
+            contact_info = self.extract_contact_info(resume_text)
+            if contact_info['email'] or contact_info['phone']:
+                analysis['strengths'].append('Clear contact information provided')
+                analysis['overall_score'] += 5
+            else:
+                analysis['improvements'].append('Missing contact information (email or phone)')
+                analysis['recommendations'].append('Add your email address and phone number at the top of the resume')
 
-        # 4. Analyze action verbs
-        action_verbs_found = self.find_action_verbs(text_lower)
-        if len(action_verbs_found) >= 8:
-            analysis['strengths'].append(f'Excellent use of action verbs ({len(action_verbs_found)} found)')
-            analysis['overall_score'] += 10
-        elif len(action_verbs_found) >= 4:
-            analysis['strengths'].append(f'Good use of action verbs ({len(action_verbs_found)} found)')
-            analysis['overall_score'] += 5
-        else:
-            analysis['improvements'].append('Few action verbs used to describe achievements')
-            analysis['recommendations'].append('Start each bullet point with strong action verbs like: managed, developed, implemented, led')
+            # 3. Analyze keywords
+            analysis['keyword_analysis'] = self.analyze_keywords(text_lower)
+            
+            technical_count = len(analysis['keyword_analysis']['technical_skills_found'])
+            if technical_count >= 5:
+                analysis['strengths'].append(f'Strong technical skills section with {technical_count} skills identified')
+                analysis['overall_score'] += 12
+            else:
+                analysis['improvements'].append('Limited technical skills listed')
+                analysis['recommendations'].append('Add more specific technical skills and technologies you are proficient in')
+                analysis['overall_score'] -= 3
 
-        # 5. Check for quantifiable achievements
-        metrics = self.extract_metrics(text_lower)
-        if len(metrics) >= 3:
-            analysis['strengths'].append(f'Strong use of quantifiable metrics and achievements')
-            analysis['overall_score'] += 12
-        else:
-            analysis['improvements'].append('Lacks specific numbers and metrics')
-            analysis['recommendations'].append('Add quantifiable achievements with percentages, dollar amounts, or timeframes')
+            # 4. Analyze action verbs
+            action_verbs_found = self.find_action_verbs(text_lower)
+            if len(action_verbs_found) >= 8:
+                analysis['strengths'].append(f'Excellent use of action verbs ({len(action_verbs_found)} found)')
+                analysis['overall_score'] += 10
+            elif len(action_verbs_found) >= 4:
+                analysis['strengths'].append(f'Good use of action verbs ({len(action_verbs_found)} found)')
+                analysis['overall_score'] += 5
+            else:
+                analysis['improvements'].append('Few action verbs used to describe achievements')
+                analysis['recommendations'].append('Start each bullet point with strong action verbs like: managed, developed, implemented, led')
 
-        # 6. Check for soft skills
-        soft_skills_found = self.find_soft_skills(text_lower)
-        if len(soft_skills_found) >= 3:
-            analysis['strengths'].append(f'Demonstrates soft skills ({len(soft_skills_found)} identified)')
-            analysis['overall_score'] += 5
-        else:
-            analysis['recommendations'].append('Consider highlighting relevant soft skills like leadership and communication')
+            # 5. Check for quantifiable achievements
+            metrics = self.extract_metrics(text_lower)
+            if len(metrics) >= 3:
+                analysis['strengths'].append(f'Strong use of quantifiable metrics and achievements')
+                analysis['overall_score'] += 12
+            else:
+                analysis['improvements'].append('Lacks specific numbers and metrics')
+                analysis['recommendations'].append('Add quantifiable achievements with percentages, dollar amounts, or timeframes')
 
-        # 7. Check for certifications
-        certs_found = self.find_certifications(text_lower)
-        if len(certs_found) > 0:
-            analysis['strengths'].append(f'Includes professional certifications/education')
-            analysis['overall_score'] += 5
+            # 6. Check for soft skills
+            soft_skills_found = self.find_soft_skills(text_lower)
+            if len(soft_skills_found) >= 3:
+                analysis['strengths'].append(f'Demonstrates soft skills ({len(soft_skills_found)} identified)')
+                analysis['overall_score'] += 5
+            else:
+                analysis['recommendations'].append('Consider highlighting relevant soft skills like leadership and communication')
 
-        # 8. Analyze structure and formatting
-        structure_score = self.analyze_structure(resume_text, text_lower)
-        analysis['overall_score'] += structure_score['score']
-        analysis['strengths'].extend(structure_score['strengths'])
-        analysis['improvements'].extend(structure_score['improvements'])
-        analysis['recommendations'].extend(structure_score['recommendations'])
+            # 7. Check for certifications
+            certs_found = self.find_certifications(text_lower)
+            if len(certs_found) > 0:
+                analysis['strengths'].append(f'Includes professional certifications/education')
+                analysis['overall_score'] += 5
 
-        # 9. Check word count
-        word_count = len(resume_text.split())
-        analysis['statistics']['word_count'] = word_count
-        analysis['statistics']['line_count'] = len(resume_text.split('\n'))
-        analysis['statistics']['character_count'] = len(resume_text)
+            # 8. Analyze structure and formatting
+            structure_score = self.analyze_structure(resume_text, text_lower)
+            analysis['overall_score'] += structure_score['score']
+            analysis['strengths'].extend(structure_score['strengths'])
+            analysis['improvements'].extend(structure_score['improvements'])
+            analysis['recommendations'].extend(structure_score['recommendations'])
 
-        if word_count < 200:
-            analysis['improvements'].append('Resume is too brief')
-            analysis['recommendations'].append('Expand your resume with more details about your achievements')
-            analysis['overall_score'] -= 5
-        elif word_count > 600:
-            analysis['improvements'].append('Resume might be too lengthy')
-            analysis['recommendations'].append('Try to keep your resume concise, ideally between 200-600 words')
-            analysis['overall_score'] -= 3
+            # 9. Check word count
+            word_count = len(resume_text.split())
+            analysis['statistics']['word_count'] = word_count
+            analysis['statistics']['line_count'] = len(resume_text.split('\n'))
+            analysis['statistics']['character_count'] = len(resume_text)
 
-        analysis['statistics']['technical_skills_count'] = technical_count
-        analysis['statistics']['action_verbs_count'] = len(action_verbs_found)
-        analysis['statistics']['metrics_count'] = len(metrics)
-        analysis['statistics']['soft_skills_count'] = len(soft_skills_found)
-        analysis['statistics']['certifications_count'] = len(certs_found)
+            if word_count < 200:
+                analysis['improvements'].append('Resume is too brief')
+                analysis['recommendations'].append('Expand your resume with more details about your achievements')
+                analysis['overall_score'] -= 5
+            elif word_count > 600:
+                analysis['improvements'].append('Resume might be too lengthy')
+                analysis['recommendations'].append('Try to keep your resume concise, ideally between 200-600 words')
+                analysis['overall_score'] -= 3
 
-        # Ensure score is between 0 and 100
-        analysis['overall_score'] = max(0, min(100, analysis['overall_score']))
+            analysis['statistics']['technical_skills_count'] = technical_count
+            analysis['statistics']['action_verbs_count'] = len(action_verbs_found)
+            analysis['statistics']['metrics_count'] = len(metrics)
+            analysis['statistics']['soft_skills_count'] = len(soft_skills_found)
+            analysis['statistics']['certifications_count'] = len(certs_found)
 
-        # Generate final recommendations
-        if analysis['overall_score'] < 50:
-            analysis['recommendations'].insert(0, 'Focus on adding more quantifiable achievements and specific skills')
-        elif analysis['overall_score'] < 70:
-            analysis['recommendations'].insert(0, 'Your resume is solid. Consider the suggestions above for further improvement')
-        else:
-            analysis['recommendations'].insert(0, 'Excellent resume! Minor refinements can push it to the next level')
+            # Ensure score is between 0 and 100
+            analysis['overall_score'] = max(0, min(100, analysis['overall_score']))
+
+            # Generate final recommendations
+            if len(analysis['recommendations']) == 0:
+                if analysis['overall_score'] >= 80:
+                    analysis['recommendations'].append('Excellent resume! Minor refinements can push it to the next level')
+                elif analysis['overall_score'] >= 60:
+                    analysis['recommendations'].append('Your resume is solid. Consider the suggestions above for further improvement')
+                else:
+                    analysis['recommendations'].append('Focus on adding more quantifiable achievements and specific skills')
+
+        except Exception as e:
+            print(f"Analysis error: {e}")
+            analysis['improvements'].append(f"Error during analysis: {str(e)}")
 
         return analysis
 
@@ -357,13 +624,18 @@ class ResumeAnalyzer:
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    if not filename or '.' not in filename:
+        return False
+    return filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 @app.route('/')
 def index():
     """Serve the main page"""
-    return render_template('index.html')
+    try:
+        return render_template('index.html')
+    except Exception as e:
+        return f"Error loading page: {str(e)}", 500
 
 
 @app.route('/api/analyze', methods=['POST'])
@@ -376,7 +648,7 @@ def analyze_resume():
 
         file = request.files['file']
 
-        if file.filename == '':
+        if not file or file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
         if not allowed_file(file.filename):
@@ -384,35 +656,44 @@ def analyze_resume():
 
         # Save file temporarily
         filename = secure_filename(file.filename)
+        if not filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+            
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         filename = f"{timestamp}_{filename}"
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        
+        try:
+            file.save(filepath)
+        except Exception as e:
+            return jsonify({'error': f'Failed to save file: {str(e)}'}), 500
 
         try:
             # Extract text from file
             analyzer = ResumeAnalyzer()
             resume_text = analyzer.extract_text_from_file(filepath)
 
-            if not resume_text.strip():
+            if not resume_text or not resume_text.strip():
                 return jsonify({'error': 'Could not extract text from file'}), 400
 
-            # Analyze resume
-            analysis = analyzer.analyze(resume_text)
+            # Get job description if provided
+            job_description = request.form.get('job_description', '').strip()
 
-            # Clean up temporary file
-            os.remove(filepath)
+            # Analyze resume
+            analysis = analyzer.analyze(resume_text, job_description if job_description else None)
 
             return jsonify(analysis), 200
 
-        except Exception as e:
-            # Clean up file on error
-            if os.path.exists(filepath):
-                os.remove(filepath)
-            return jsonify({'error': str(e)}), 500
+        finally:
+            # Clean up temporary file
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+            except Exception as e:
+                print(f"Warning: Could not delete temporary file: {e}")
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Server error: {str(e)}'}), 500
 
 
 @app.route('/api/sample-analysis', methods=['GET'])
@@ -471,9 +752,46 @@ def get_sample_analysis():
     - Spanish (Intermediate)
     """
 
-    analyzer = ResumeAnalyzer()
-    analysis = analyzer.analyze(sample_resume)
-    return jsonify(analysis), 200
+    sample_job_description = """
+    Senior Software Engineer Position
+    
+    We are looking for a Senior Software Engineer with experience in:
+    - Python and JavaScript programming
+    - React and Node.js frameworks
+    - AWS and Docker containerization
+    - Kubernetes orchestration
+    - SQL and NoSQL databases
+    - REST API development
+    - CI/CD pipeline implementation
+    - Leadership and team management
+    - Agile methodology
+    
+    Responsibilities:
+    - Design and implement scalable microservices
+    - Lead technical initiatives
+    - Mentor junior developers
+    - Improve system performance
+    - Implement automated testing
+    """
+
+    try:
+        analyzer = ResumeAnalyzer()
+        analysis = analyzer.analyze(sample_resume, sample_job_description)
+        return jsonify(analysis), 200
+    except Exception as e:
+        return jsonify({'error': f'Error generating sample analysis: {str(e)}'}), 500
+
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Handle file too large error"""
+    return jsonify({'error': 'File is too large. Maximum size is 16MB'}), 413
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """Handle internal server errors"""
+    return jsonify({'error': 'Internal server error'}), 500
 
 
 if __name__ == '__main__':
