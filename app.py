@@ -18,7 +18,7 @@ try:
 except LookupError:
     nltk.download('punkt')
 
-        try:
+try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
     nltk.download('stopwords')
