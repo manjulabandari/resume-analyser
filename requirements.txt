@@ -1,10 +1,5 @@
-pdfminer3
-pyresparser
-streamlit
-pandas
-pafy
-plotly
-pymysql
-streamlit-tags
-Pillow
-
+Flask==2.3.0
+Werkzeug==2.3.0
+pdfplumber==0.10.3
+python-docx==0.8.11
+nltk==3.8.1
